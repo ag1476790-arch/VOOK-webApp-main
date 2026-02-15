@@ -4,20 +4,24 @@ import { useEffect } from 'react'
 
 export const useRealtimePosts = (onNewPost: (post: any) => void) => {
   useEffect(() => {
-    const channel = supabase
-      .channel('posts-realtime')
-      .on('postgres_changes', 
-        { event: 'INSERT', schema: 'public', table: 'posts' }, 
-        (payload) => {
-          console.log('🔔 New post:', payload.new)
-          onNewPost(payload.new)
-        }
-      )
-      .subscribe((status) => {
-        console.log('🔌 Status:', status)
-        if (status === 'SUBSCRIBED') console.log('✅ Realtime ACTIVE')
-      })
+  const channel = supabase
+    .channel("posts-realtime")
+    .on(
+      "postgres_changes",
+      {
+        event: "INSERT",
+        schema: "public",
+        table: "posts",
+      },
+      (payload) => {
+        onNewPost(payload.new);
+      }
+    )
+    .subscribe();
 
-    return () => supabase.removeChannel(channel)
-  }, [onNewPost])
+  return () => {
+    supabase.removeChannel(channel);
+  };
+}, [onNewPost]);
+
 }
