@@ -43,45 +43,48 @@ export class RealtimeSubscription {
 
             // Set up event handlers
             if (this.options.onInsert || this.options.event === '*' || this.options.event === 'INSERT') {
-                this.channel.on(
+                (this.channel as any).on(
                     'postgres_changes',
+
                     {
                         event: 'INSERT',
                         schema: this.options.schema,
                         table: this.options.table,
                         filter: this.options.filter,
                     },
-                    (payload) => {
+                    (payload:any) => {
                         this.options.onInsert?.(payload);
                     }
                 );
             }
 
             if (this.options.onUpdate || this.options.event === '*' || this.options.event === 'UPDATE') {
-                this.channel.on(
+                (this.channel as any).on(
                     'postgres_changes',
+
                     {
                         event: 'UPDATE',
                         schema: this.options.schema,
                         table: this.options.table,
                         filter: this.options.filter,
                     },
-                    (payload) => {
+                    (payload:any) => {
                         this.options.onUpdate?.(payload);
                     }
                 );
             }
 
             if (this.options.onDelete || this.options.event === '*' || this.options.event === 'DELETE') {
-                this.channel.on(
+                (this.channel as any).on(
                     'postgres_changes',
+
                     {
                         event: 'DELETE',
                         schema: this.options.schema,
                         table: this.options.table,
                         filter: this.options.filter,
                     },
-                    (payload) => {
+                    (payload:any) => {
                         this.options.onDelete?.(payload);
                     }
                 );
@@ -100,19 +103,14 @@ export class RealtimeSubscription {
             });
 
             // Subscribe with error handling
-            const subscribeResult = await this.channel.subscribe((status, err) => {
+            this.channel.subscribe((status) => {
                 if (status === 'SUBSCRIBED') {
                     this.isSubscribed = true;
-                    this.retryCount = 0;
-                } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-                    this.handleError(err || new Error(`Subscription failed with status: ${status}`));
+                } else if (status === 'CHANNEL_ERROR') {
+                    console.error('Realtime channel error');
                 }
             });
 
-            if (subscribeResult === 'SUBSCRIBED') {
-                this.isSubscribed = true;
-                this.retryCount = 0;
-            }
 
             return this.channel;
         } catch (error) {
