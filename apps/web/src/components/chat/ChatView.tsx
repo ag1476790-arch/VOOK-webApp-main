@@ -140,167 +140,66 @@ const ChatView = ({ chat, onBack, className }: ChatViewProps) => {
 
 
   // Fetch Messages & Subscribe
-  useEffect(() => {
-    const fetchMessages = async () => {
-      const { data, error } = await supabase
-        .from('messages')
-        .select(`
-          *,
-          *,
-          sender_profile:sender_id(full_name, username),
-          post_details:post_id(id, content, image_urls, video_url, user_id, profiles:user_id(full_name, avatar_url))
-        `)
-        .eq('chat_id', chat.chatId)
-        .order('created_at', { ascending: true });
+  // Fetch Messages & Subscribe
+useEffect(() => {
+  const fetchMessages = async () => {
+    const { data, error } = await supabase
+      .from("messages")
+      .select(`
+        *,
+        sender_profile:sender_id(full_name, username)
+      `)
+      .eq("chat_id", chat.chatId)
+      .order("created_at", { ascending: true });
 
-      if (error) {
-        console.error("Error fetching messages:", error);
-        toast.error("Failed to load messages");
-        return;
-      }
+    if (error) {
+      console.error("Error fetching messages:", error);
+      return;
+    }
 
-      const formatted: Message[] = data.map((m: any) => {
-        let type: Message['type'] = 'text';
-        const content = m.content || "";
+    const formatted: Message[] = data.map((m: any) => ({
+      id: m.id,
+      content: m.content,
+      type: "text",
+      sender: m.sender_id === currentUser?.id ? "me" : "them",
+      senderId: m.sender_id,
+      senderName:
+        m.sender_profile?.full_name ||
+        m.sender_profile?.username ||
+        "Unknown",
+      timestamp: new Date(m.created_at).toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      }),
+      status: m.read_at ? "read" : "delivered",
+    }));
 
-        if (m.post_id && m.post_details) {
-          type = 'post';
-        } else if (content.startsWith('http')) {
-          if (content.includes('giphy') || content.includes('tenor')) type = 'gif';
-          else if (content.match(/\.(jpeg|jpg|gif|png|webp)$/i)) type = 'image';
-          else if (content.match(/\.(mp4|webm|ogg)$/i)) type = 'video';
-          else if (content.match(/\.(mp3|wav)$/i)) type = 'audio';
-          else if (content.includes('/images/')) type = 'image';
-          else type = 'file';
-        }
+    setMessages(formatted);
+  };
 
-        return {
-          id: m.id,
-          content: m.content,
-          type: type,
-          sender: m.sender_id === currentUser?.id ? 'me' : 'them',
-          senderId: m.sender_id,
-          senderName: m.sender_profile?.full_name || m.sender_profile?.username || "Unknown",
-          timestamp: new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          status: m.read_at ? 'read' : 'delivered',
+  fetchMessages();
 
-          reactions: [],
-          post: m.post_details ? {
-            id: m.post_details.id,
-            author: m.post_details.profiles?.full_name,
-            avatar: m.post_details.profiles?.avatar_url,
-            content: m.post_details.content,
-            image: m.post_details.image_urls?.[0]
-          } : undefined
-        };
-      });
-      setMessages(formatted);
-
-      // Mark unread as read
-      const unreadIds = data
-        .filter((m: any) => m.sender_id !== currentUser?.id && !m.read_at)
-        .map((m: any) => m.id);
-
-      if (unreadIds.length > 0 && currentUser?.id) {
-        await supabase.rpc('mark_messages_read_batch', {
-          p_message_ids: unreadIds,
-          p_user_id: currentUser.id
-        });
-        refreshUnreadMessages();
-      }
-    };
-
-    fetchMessages();
-
-    // Realtime Subscription with retry logic
-    const subscriptionRef = useRef<RealtimeSubscription | null>(null);
-    const channelRef = useRef<any>(null);
-
-    useEffect(() => {
-      // Create subscription for postgres_changes
-      const subscription = new RealtimeSubscription({
-        channel: `chat:${chat.chatId}`,
-        table: 'messages',
-        event: 'INSERT',
+  const subscription = supabase
+    .channel(`chat:${chat.chatId}`)
+    .on(
+      "postgres_changes",
+      {
+        event: "INSERT",
+        schema: "public",
+        table: "messages",
         filter: `chat_id=eq.${chat.chatId}`,
-        onInsert: async (payload) => {
-          const newMsg = payload.new as any;
+      },
+      () => {
+        fetchMessages();
+      }
+    )
+    .subscribe();
 
-          // Fetch sender profile for the new message
-          const { data: senderData } = await supabase
-            .from('profiles')
-            .select('full_name, username')
-            .eq('id', newMsg.sender_id)
-            .single();
+  return () => {
+    supabase.removeChannel(subscription);
+  };
+}, [chat.chatId, currentUser?.id]);
 
-          const content = newMsg.content || "";
-          let type: Message['type'] = 'text';
-          if (content.startsWith('http')) {
-            if (content.includes('giphy') || content.includes('tenor')) type = 'gif';
-            else if (content.match(/\.(jpeg|jpg|gif|png|webp)$/i)) type = 'image';
-            else if (content.match(/\.(mp4|webm|ogg)$/i)) type = 'video';
-            else if (content.match(/\.(mp3|wav)$/i)) type = 'audio';
-            else if (content.includes('/images/')) type = 'image';
-            else type = 'file';
-          }
-
-          setMessages(prev => {
-            if (prev.some(m => m.id === newMsg.id)) return prev;
-
-            const formattedMsg: Message = {
-              id: newMsg.id,
-              content: newMsg.content,
-              type: type,
-              sender: newMsg.sender_id === currentUser?.id ? 'me' : 'them',
-              senderId: newMsg.sender_id,
-              senderName: senderData?.full_name || senderData?.username || "Unknown",
-              timestamp: new Date(newMsg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-              status: 'delivered'
-            };
-            return [...prev, formattedMsg];
-          });
-
-          if (newMsg.sender_id !== currentUser?.id) {
-            try {
-              await supabase.rpc('mark_message_read', {
-                p_message_id: newMsg.id,
-                p_user_id: currentUser!.id
-              });
-              refreshUnreadMessages();
-            } catch (e) { console.error(e); }
-          }
-        },
-        onError: (error) => console.error('Chat subscription error:', error),
-      });
-
-      subscriptionRef.current = subscription;
-
-      // Subscribe and get the channel for additional event handlers
-      subscription.subscribe().then((channel) => {
-        channelRef.current = channel;
-
-        // Add presence handler
-        channel.on('presence', { event: 'sync' }, () => {
-          // Presence logic placeholder
-        });
-
-        // Add broadcast handler for typing indicators
-        channel.on('broadcast', { event: 'typing' }, (payload) => {
-          if (payload.payload.userId !== currentUser?.id) {
-            setOtherUserTyping(true);
-            setTimeout(() => setOtherUserTyping(false), 3000);
-          }
-        });
-      }).catch((error) => {
-        console.error('Failed to subscribe to chat channel:', error);
-      });
-
-      return () => {
-        subscription.unsubscribe();
-        subscriptionRef.current = null;
-        channelRef.current = null;
-      };
-    }, [chat.chatId, currentUser?.id, refreshUnreadMessages]);
 
   const handleTyping = () => {
     if (!isTyping) {
